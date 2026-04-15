@@ -250,10 +250,16 @@ def parse_html_table(html: str) -> dict:
         return {"headers": [], "rows": [], "col_count": 0}
 
 
-def resolve_image(src: str, images_dir: str):
-    for path in [src,
-                 os.path.join(images_dir, src),
-                 os.path.join(images_dir, os.path.basename(src))]:
+def resolve_image(src: str, images_dir: str, md_dir: str = ""):
+    candidates = [
+        src,
+        os.path.join(images_dir, src),
+        os.path.join(images_dir, os.path.basename(src)),
+    ]
+    if md_dir:
+        candidates.append(os.path.join(md_dir, src))
+        candidates.append(os.path.join(md_dir, os.path.basename(src)))
+    for path in candidates:
         if os.path.isfile(path):
             return path
     return None
@@ -386,7 +392,7 @@ def build_docx_file(tokens: list, images_dir: str, output_path: str,
             add_inline(p, tok["text"])
 
         elif t == "image":
-            img_path = resolve_image(tok["src"], images_dir)
+            img_path = resolve_image(tok["src"], images_dir, md_dir)
             if img_path:
                 try:
                     p = doc.add_paragraph()
@@ -436,7 +442,7 @@ def build_docx_file(tokens: list, images_dir: str, output_path: str,
                 run.italic = True
 
         elif t == "table_image":
-            # 表格：先插 PNG 图片，再插真实 Word 表格（两个都要）
+            # 表格：若为 .html 文件直接解析为 Word 表格；否则先插PNG再插JSON表格
             from pathlib import Path as _P
             tbl_path = tok["path"]
             base = _P(md_dir) if md_dir else _P(images_dir).parent
@@ -452,46 +458,85 @@ def build_docx_file(tokens: list, images_dir: str, output_path: str,
                         return str(c)
                 return None
 
-            # ① 插入 PNG 图片
-            img_path = _find_file(tbl_path)
-            if img_path:
-                try:
-                    p = doc.add_paragraph()
-                    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                    p.add_run().add_picture(img_path, width=CONTENT_WIDTH)
-                    log(f"  ✓ 表格PNG插入: {img_path}\n")
-                except Exception as e:
-                    log(f"  [WARN] 表格PNG插入失败: {e}\n")
+            tbl_lower = tbl_path.lower()
+            if tbl_lower.endswith(".html") or tbl_lower.endswith(".htm"):
+                # HTML 表格文件 → 直接解析渲染为 Word 表格
+                html_path = _find_file(tbl_path)
+                if html_path:
+                    try:
+                        html_content = open(html_path, encoding="utf-8", errors="replace").read()
+                        td = parse_html_table(html_content)
+                        if td["col_count"]:
+                            headers = td["headers"]
+                            rows = td["rows"]
+                            col_n = td["col_count"]
+                            n_rows = (1 if headers else 0) + len(rows)
+                            if n_rows > 0:
+                                table = doc.add_table(rows=n_rows, cols=col_n)
+                                table.style = "Table Grid"
+                                table.alignment = WD_TABLE_ALIGNMENT.CENTER
+                                ri = 0
+                                if headers:
+                                    for ci, h in enumerate(headers[:col_n]):
+                                        cell = table.rows[ri].cells[ci]
+                                        cell.text = h
+                                        if cell.paragraphs and cell.paragraphs[0].runs:
+                                            cell.paragraphs[0].runs[0].bold = True
+                                            cell.paragraphs[0].runs[0].font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
+                                        _set_cell_bg(cell, "1F3864")
+                                    ri += 1
+                                for row_data in rows:
+                                    padded = (row_data + [""] * col_n)[:col_n]
+                                    for ci, val in enumerate(padded):
+                                        table.rows[ri].cells[ci].text = val
+                                    ri += 1
+                                doc.add_paragraph()
+                                log(f"  ✓ HTML表格插入: {tbl_path}\n")
+                    except Exception as e:
+                        log(f"  [WARN] HTML表格插入失败: {e}\n")
+                else:
+                    log(f"  [WARN] HTML表格文件未找到: {tbl_path}\n")
             else:
-                log(f"  [WARN] 表格PNG未找到: {base / tbl_path}\n")
+                # ① 插入 PNG 图片
+                img_path = _find_file(tbl_path)
+                if img_path:
+                    try:
+                        p = doc.add_paragraph()
+                        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                        p.add_run().add_picture(img_path, width=CONTENT_WIDTH)
+                        log(f"  ✓ 表格PNG插入: {img_path}\n")
+                    except Exception as e:
+                        log(f"  [WARN] 表格PNG插入失败: {e}\n")
+                else:
+                    log(f"  [WARN] 表格PNG未找到: {tbl_path}\n")
 
-            # ② 插入真实 Word 表格
-            json_rel = tbl_path.replace(".png", ".json").replace(".PNG", ".json")
-            json_path = _find_file(json_rel)
-            if json_path:
-                try:
-                    import json as _json
-                    grid = _json.loads(open(json_path, encoding="utf-8").read())
-                    if grid:
-                        col_n = max(len(r) for r in grid)
-                        n_rows = len(grid)
-                        table = doc.add_table(rows=n_rows, cols=col_n)
-                        table.style = "Table Grid"
-                        table.alignment = WD_TABLE_ALIGNMENT.CENTER
-                        for ri, row in enumerate(grid):
-                            padded = (row + [""] * col_n)[:col_n]
-                            for ci, val in enumerate(padded):
-                                cell = table.rows[ri].cells[ci]
-                                cell.text = val
-                                if ri < 2:
-                                    if cell.paragraphs and cell.paragraphs[0].runs:
-                                        cell.paragraphs[0].runs[0].bold = True
-                                        cell.paragraphs[0].runs[0].font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
-                                    _set_cell_bg(cell, "1F3864")
-                        doc.add_paragraph()
-                        log(f"  ✓ 真实Word表格插入: {tbl_path}\n")
-                except Exception as e:
-                    log(f"  [WARN] Word表格插入失败: {e}\n")
+                # ② 插入真实 Word 表格（JSON格式）
+                json_rel = tbl_path.replace(".png", ".json").replace(".PNG", ".json")
+                json_path = _find_file(json_rel)
+                if json_path:
+                    try:
+                        import json as _json
+                        grid = _json.loads(open(json_path, encoding="utf-8").read())
+                        if grid:
+                            col_n = max(len(r) for r in grid)
+                            n_rows = len(grid)
+                            table = doc.add_table(rows=n_rows, cols=col_n)
+                            table.style = "Table Grid"
+                            table.alignment = WD_TABLE_ALIGNMENT.CENTER
+                            for ri, row in enumerate(grid):
+                                padded = (row + [""] * col_n)[:col_n]
+                                for ci, val in enumerate(padded):
+                                    cell = table.rows[ri].cells[ci]
+                                    cell.text = val
+                                    if ri < 2:
+                                        if cell.paragraphs and cell.paragraphs[0].runs:
+                                            cell.paragraphs[0].runs[0].bold = True
+                                            cell.paragraphs[0].runs[0].font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
+                                        _set_cell_bg(cell, "1F3864")
+                            doc.add_paragraph()
+                            log(f"  ✓ 真实Word表格插入: {tbl_path}\n")
+                    except Exception as e:
+                        log(f"  [WARN] Word表格插入失败: {e}\n")
             continue
 
         elif t == "html_table":
