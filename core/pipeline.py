@@ -15,6 +15,7 @@ from core.region_extractor import crop_region, scale_bbox_to_page
 from core.vlm_client import analyze_page_layout, table_image_to_markdown, formula_image_to_latex
 from core.md_builder import blocks_to_markdown, write_markdown, create_zip
 from core.word_exporter import export_word
+from core.md_cleaner import clean_markdown
 
 
 class ParseResult:
@@ -298,6 +299,7 @@ def run_pipeline(file_path: str,
 
         md_content = blocks_to_markdown(blocks, images_rel_dir="images",
                                         tables_rel_dir="tables", out_dir=out_dir)
+        md_content = clean_markdown(md_content)
         stem = Path(file_path).stem
         md_path = out_dir / f"{stem}.md"
         write_markdown(md_content, md_path)

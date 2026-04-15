@@ -761,11 +761,11 @@ class Tool3Panel(tk.Frame):
             title='选择 Markdown 文件',
             filetypes=[('Markdown', '*.md'), ('所有文件', '*.*')])
         if path:
-            self._file_row.set_path(path)
+            self._file_row.set(path)
             self._update_file_info(path)
         elif self._shared.get('last_md_path'):
             path = self._shared['last_md_path']
-            self._file_row.set_path(path)
+            self._file_row.set(path)
             self._update_file_info(path)
 
     def _update_file_info(self, path):
@@ -782,10 +782,10 @@ class Tool3Panel(tk.Frame):
             self._file_info.config(text=f'读取失败: {e}')
 
     def _start_thread(self):
-        path = self._file_row.get_path()
+        path = self._file_row.get()
         if not path:
             path = self._shared.get('last_md_path', '')
-            if path: self._file_row.set_path(path)
+            if path: self._file_row.set(path)
         if not path:
             messagebox.showerror('错误', '请选择 MD 文件', parent=self)
             return
