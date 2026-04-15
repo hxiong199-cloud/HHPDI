@@ -897,6 +897,7 @@ class Tool3Panel(tk.Frame):
 
     def _call_llm(self, system_prompt, user_msg):
         import requests as rq
+        import time
         url   = self._url_entry.get().strip()
         key   = self._key_entry.get().strip()
         model = self._model_var.get().strip()
@@ -906,12 +907,28 @@ class Tool3Panel(tk.Frame):
              'messages': [{'role': 'system', 'content': system_prompt},
                            {'role': 'user',   'content': user_msg}],
              'max_tokens': 2048, 'temperature': 0}
-        r = rq.post(url, headers=h, json=p, timeout=300)
-        r.raise_for_status()
-        raw = r.json()['choices'][0]['message']['content'].strip()
-        raw = re.sub(r'^```(?:json)?\s*', '', raw)
-        raw = re.sub(r'\s*```$', '', raw).strip()
-        return raw
+        max_retries = 4
+        wait = 2
+        last_exc = None
+        for attempt in range(max_retries):
+            try:
+                r = rq.post(url, headers=h, json=p, timeout=300)
+                if r.status_code == 429:
+                    # 限流：等待后重试
+                    time.sleep(wait)
+                    wait *= 2
+                    continue
+                r.raise_for_status()
+                raw = r.json()['choices'][0]['message']['content'].strip()
+                raw = re.sub(r'^```(?:json)?\s*', '', raw)
+                raw = re.sub(r'\s*```$', '', raw).strip()
+                return raw
+            except Exception as exc:
+                last_exc = exc
+                if attempt < max_retries - 1:
+                    time.sleep(wait)
+                    wait *= 2
+        raise last_exc
 
     def _process_text(self, unit):
         sys_p = (PROMPT_TEXT

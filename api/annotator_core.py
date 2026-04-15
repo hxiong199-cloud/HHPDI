@@ -439,12 +439,28 @@ def _call_llm(url: str, key: str, model: str,
         'max_tokens': 2048,
         'temperature': 0,
     }
-    r = rq.post(url, headers=headers, json=payload, timeout=300)
-    r.raise_for_status()
-    raw = r.json()['choices'][0]['message']['content'].strip()
-    raw = re.sub(r'^```(?:json)?\s*', '', raw)
-    raw = re.sub(r'\s*```$', '', raw).strip()
-    return raw
+    import time
+    max_retries = 4
+    wait = 2
+    last_exc = None
+    for attempt in range(max_retries):
+        try:
+            r = rq.post(url, headers=headers, json=payload, timeout=300)
+            if r.status_code == 429:
+                time.sleep(wait)
+                wait *= 2
+                continue
+            r.raise_for_status()
+            raw = r.json()['choices'][0]['message']['content'].strip()
+            raw = re.sub(r'^```(?:json)?\s*', '', raw)
+            raw = re.sub(r'\s*```$', '', raw).strip()
+            return raw
+        except Exception as exc:
+            last_exc = exc
+            if attempt < max_retries - 1:
+                time.sleep(wait)
+                wait *= 2
+    raise last_exc
 
 
 def _process_text_unit(unit: dict, url: str, key: str, model: str) -> dict:
