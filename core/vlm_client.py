@@ -5,10 +5,12 @@ VLM API 客户端
 """
 
 import base64
+import io
 import json
 import re
 from pathlib import Path
 from typing import Optional
+from PIL import Image
 from openai import OpenAI
 from config.settings import get_config
 
@@ -27,9 +29,23 @@ def _get_client() -> tuple[OpenAI, str]:
         return client, lcfg["model"]
 
 
-def _encode_image(image_path: str) -> str:
-    with open(image_path, "rb") as f:
-        return base64.b64encode(f.read()).decode("utf-8")
+def _encode_image(image_path: str, max_long_side: int = 1500, jpeg_quality: int = 85) -> str:
+    """
+    读取图片，自动压缩后返回 base64 字符串。
+    - 长边超过 max_long_side 时等比缩放
+    - 统一转为 JPEG 输出，减少传输体积
+    """
+    img = Image.open(image_path)
+    if img.mode in ("RGBA", "P", "LA"):
+        img = img.convert("RGB")
+    w, h = img.size
+    long_side = max(w, h)
+    if long_side > max_long_side:
+        scale = max_long_side / long_side
+        img = img.resize((int(w * scale), int(h * scale)), Image.LANCZOS)
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG", quality=jpeg_quality, optimize=True)
+    return base64.b64encode(buf.getvalue()).decode("utf-8")
 
 
 # ── Prompt 模板 ──────────────────────────────────────────────
@@ -105,7 +121,7 @@ def analyze_page_layout(image_path: str, progress_cb=None) -> dict:
                 "role": "user",
                 "content": [
                     {"type": "image_url",
-                     "image_url": {"url": f"data:image/png;base64,{b64}"}},
+                     "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},
                     {"type": "text", "text": LAYOUT_PROMPT},
                 ],
             }
@@ -140,7 +156,7 @@ def table_image_to_markdown(image_path: str) -> str:
                 "role": "user",
                 "content": [
                     {"type": "image_url",
-                     "image_url": {"url": f"data:image/png;base64,{b64}"}},
+                     "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},
                     {"type": "text", "text": TABLE_TO_MD_PROMPT},
                 ],
             }
@@ -163,7 +179,7 @@ def formula_image_to_latex(image_path: str) -> str:
                 "role": "user",
                 "content": [
                     {"type": "image_url",
-                     "image_url": {"url": f"data:image/png;base64,{b64}"}},
+                     "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},
                     {"type": "text", "text": FORMULA_DESCRIBE_PROMPT},
                 ],
             }

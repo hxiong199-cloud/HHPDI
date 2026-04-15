@@ -89,21 +89,26 @@ def _process_pdf(file_path: str, out_dir: Path,
                 continue
         else:
             # 文字页：用 PyMuPDF 提取文字/标题块
-            # 同时调用 VLM 检测表格和公式区域（PyMuPDF 无法识别这两类）
+            # 仅当页面含图形元素时才调用 VLM 检测表格/公式（纯文字页跳过）
             text_blocks = page_info["text_blocks"]
 
             # VLM 全页分析，只取 table/formula/figure 区域
             vlm_special_blocks = []
-            try:
+            if page_info.get("has_graphics", True):
+                try:
+                    if progress_cb:
+                        progress_cb(page_no, total_pages,
+                                    f"VLM 检测第 {page_no+1}/{total_pages} 页表格/公式...")
+                    layout = analyze_page_layout(str(tmp_page_path))
+                    for b in layout.get("blocks", []):
+                        if b.get("type") in ("table", "formula", "figure"):
+                            vlm_special_blocks.append(b)
+                except Exception:
+                    pass  # VLM 失败时只用文字块
+            else:
                 if progress_cb:
                     progress_cb(page_no, total_pages,
-                                f"VLM 检测第 {page_no+1}/{total_pages} 页表格/公式...")
-                layout = analyze_page_layout(str(tmp_page_path))
-                for b in layout.get("blocks", []):
-                    if b.get("type") in ("table", "formula", "figure"):
-                        vlm_special_blocks.append(b)
-            except Exception:
-                pass  # VLM 失败时只用文字块
+                                f"第 {page_no+1}/{total_pages} 页（纯文字，跳过VLM）")
 
             # 将 VLM 检测到的特殊区域 bbox 转换为 PDF 坐标系
             # VLM 返回的是像素坐标（基于渲染图），需要转回 PDF 点坐标

@@ -28,6 +28,24 @@ def is_scanned_page(page: fitz.Page, min_text_len: int = 50) -> bool:
     return len(text) < min_text_len
 
 
+def has_visual_elements(page: fitz.Page, drawing_threshold: int = 6) -> bool:
+    """
+    判断文字型页面是否含有需要 VLM 识别的视觉元素（图片/表格/公式）。
+    True  → 需要调用 VLM 检测特殊区域
+    False → 纯文字页，可跳过 VLM
+
+    检测逻辑：
+    1. 页面含嵌入式图片 → 有视觉元素
+    2. 矢量绘图路径数量超过阈值 → 可能存在表格线条或图形
+       （一张简单水平线 ≈ 1~2条，3列×5行表格 ≈ 10条）
+    """
+    if page.get_images(full=True):
+        return True
+    if len(page.get_drawings()) >= drawing_threshold:
+        return True
+    return False
+
+
 def _collect_all_font_sizes(page: fitz.Page) -> list[float]:
     """收集页面内所有 span 的字号，用于统计基准"""
     sizes = []
@@ -229,6 +247,7 @@ def load_pdf(file_path: str, progress_cb=None) -> dict:
         pages_data.append({
             "page_no": page_no,
             "is_scanned": scanned,
+            "has_graphics": scanned or has_visual_elements(page),
             "pil_image": img,
             "text_blocks": [] if scanned else extract_page_text_blocks(page),
             "embedded_images": [],
