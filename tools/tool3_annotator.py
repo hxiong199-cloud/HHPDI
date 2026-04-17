@@ -15,7 +15,7 @@ Tool3 — MD 数据标注 v3
   在 Dify 中设置分段标识符为 #### 即可精确切分，tags 与正文一起被向量化。
 """
 
-import os, re, json, threading
+import os, re, json, threading, time, random
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
@@ -23,6 +23,27 @@ from tkinter import ttk, filedialog, messagebox
 from gui.theme import COLORS, FONTS, PADDING
 from gui.widgets import StyledButton, FilePickRow, LogView, ProgressRow, Divider
 from config.settings import get_config
+
+# ══════════════════════════════════════════════════════════════
+#  全局限速器（跨 worker 共享，防止并发请求同时打爆 API）
+# ══════════════════════════════════════════════════════════════
+
+class _RateLimiter:
+    """令牌桶：限制每秒最多 max_rps 个请求"""
+    def __init__(self, min_interval: float = 0.4):
+        self._lock = threading.Lock()
+        self._last = 0.0
+        self._min_interval = min_interval  # 相邻两次请求最小间隔（秒）
+
+    def acquire(self):
+        with self._lock:
+            now = time.time()
+            wait = self._min_interval - (now - self._last)
+            if wait > 0:
+                time.sleep(wait)
+            self._last = time.time()
+
+_rate_limiter = _RateLimiter(min_interval=0.4)  # 全局单例，≤150 RPM
 
 # ══════════════════════════════════════════════════════════════
 #  提示词
@@ -908,14 +929,16 @@ class Tool3Panel(tk.Frame):
                            {'role': 'user',   'content': user_msg}],
              'max_tokens': 2048, 'temperature': 0}
         max_retries = 4
-        wait = 2
+        wait = 3
         last_exc = None
         for attempt in range(max_retries):
+            _rate_limiter.acquire()  # 全局限速，防止并发爆 API
             try:
                 r = rq.post(url, headers=h, json=p, timeout=300)
                 if r.status_code == 429:
-                    # 限流：等待后重试
-                    time.sleep(wait)
+                    # 限流：加抖动后重试（避免所有 worker 同步重试）
+                    jitter = random.uniform(0, wait)
+                    time.sleep(wait + jitter)
                     wait *= 2
                     continue
                 r.raise_for_status()
@@ -926,7 +949,8 @@ class Tool3Panel(tk.Frame):
             except Exception as exc:
                 last_exc = exc
                 if attempt < max_retries - 1:
-                    time.sleep(wait)
+                    jitter = random.uniform(0, wait)
+                    time.sleep(wait + jitter)
                     wait *= 2
         raise last_exc
 

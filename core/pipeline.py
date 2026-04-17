@@ -189,11 +189,19 @@ def _process_pdf(file_path: str, out_dir: Path,
                     if not success:
                         continue
                 else:
-                    # 已有路径（嵌入图），重命名/复制
+                    # 已有路径（嵌入图），转换为 PNG 后复制
+                    # 注意：PyMuPDF 可能提取出 .jpeg/.jpg/.jpx 等格式
+                    # 必须用 PIL 重新编码为 PNG，不能直接 shutil.copy2
+                    # （原样复制会导致 JPEG 内容 + .png 扩展名，python-docx 报错）
                     src = Path(block["path"])
                     if src.exists() and src != fpath:
-                        import shutil
-                        shutil.copy2(src, fpath)
+                        try:
+                            from PIL import Image as _PILImg
+                            with _PILImg.open(str(src)) as _im:
+                                _im.convert("RGBA" if _im.mode in ("RGBA", "LA", "PA") else "RGB").save(str(fpath), "PNG")
+                        except Exception:
+                            import shutil
+                            shutil.copy2(src, fpath)  # 转换失败时兜底
 
                 out_block = {
                     "type": btype,

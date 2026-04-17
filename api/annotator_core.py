@@ -6,11 +6,33 @@ HHPDI API — Standalone Annotation Core
 from __future__ import annotations
 
 import json
+import random
 import re
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Callable, Optional
+
+# ══════════════════════════════════════════════════════════════
+#  全局限速器
+# ══════════════════════════════════════════════════════════════
+
+class _RateLimiter:
+    def __init__(self, min_interval: float = 0.4):
+        self._lock = threading.Lock()
+        self._last = 0.0
+        self._min_interval = min_interval
+
+    def acquire(self):
+        with self._lock:
+            now = time.time()
+            wait = self._min_interval - (now - self._last)
+            if wait > 0:
+                time.sleep(wait)
+            self._last = time.time()
+
+_rate_limiter = _RateLimiter(min_interval=0.4)
 
 # ══════════════════════════════════════════════════════════════
 #  提示词（与 tool3_annotator.py 保持一致）
@@ -439,15 +461,16 @@ def _call_llm(url: str, key: str, model: str,
         'max_tokens': 2048,
         'temperature': 0,
     }
-    import time
     max_retries = 4
-    wait = 2
+    wait = 3
     last_exc = None
     for attempt in range(max_retries):
+        _rate_limiter.acquire()
         try:
             r = rq.post(url, headers=headers, json=payload, timeout=300)
             if r.status_code == 429:
-                time.sleep(wait)
+                jitter = random.uniform(0, wait)
+                time.sleep(wait + jitter)
                 wait *= 2
                 continue
             r.raise_for_status()
@@ -458,7 +481,8 @@ def _call_llm(url: str, key: str, model: str,
         except Exception as exc:
             last_exc = exc
             if attempt < max_retries - 1:
-                time.sleep(wait)
+                jitter = random.uniform(0, wait)
+                time.sleep(wait + jitter)
                 wait *= 2
     raise last_exc
 
