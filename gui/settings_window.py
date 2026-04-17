@@ -34,8 +34,8 @@ class SettingsWindow(tk.Toplevel):
     def __init__(self, parent):
         super().__init__(parent)
         self.title("模型设置")
-        self.geometry("660x980")
-        self.resizable(True, False)
+        self.geometry("680x720")
+        self.resizable(True, True)
         self.configure(bg=COLORS["bg_main"])
         self.grab_set()
         self.update_idletasks()
@@ -68,8 +68,41 @@ class SettingsWindow(tk.Toplevel):
         StyledButton(btn_bar_outer, text="保存", style="primary",
                      command=self._save).pack(side="right")
 
-        body = tk.Frame(self, bg=COLORS["bg_main"])
-        body.pack(fill="both", expand=True, padx=PADDING["xl"], pady=PADDING["lg"])
+        # ── 可滚动 body ──────────────────────────────────────
+        scroll_outer = tk.Frame(self, bg=COLORS["bg_main"])
+        scroll_outer.pack(fill="both", expand=True)
+
+        _canvas = tk.Canvas(scroll_outer, bg=COLORS["bg_main"],
+                            highlightthickness=0, bd=0)
+        _sb = ttk.Scrollbar(scroll_outer, orient="vertical",
+                            command=_canvas.yview)
+        _canvas.configure(yscrollcommand=_sb.set)
+        _sb.pack(side="right", fill="y")
+        _canvas.pack(side="left", fill="both", expand=True)
+
+        body = tk.Frame(_canvas, bg=COLORS["bg_main"])
+        _canvas_win = _canvas.create_window(
+            (0, 0), window=body, anchor="nw")
+
+        def _on_body_configure(_e):
+            _canvas.configure(scrollregion=_canvas.bbox("all"))
+
+        def _on_canvas_configure(_e):
+            _canvas.itemconfig(_canvas_win, width=_canvas.winfo_width())
+
+        body.bind("<Configure>", _on_body_configure)
+        _canvas.bind("<Configure>", _on_canvas_configure)
+
+        # 鼠标滚轮支持（Windows）
+        def _on_mousewheel(event):
+            _canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+        _canvas.bind_all("<MouseWheel>", _on_mousewheel)
+
+        # 内边距用 Frame 代替 padx/pady
+        pad = tk.Frame(body, bg=COLORS["bg_main"])
+        pad.pack(fill="both", expand=True,
+                 padx=PADDING["xl"], pady=PADDING["lg"])
+        body = pad
 
         self._build_model_block(body, "vlm",
             title="视觉模型  (VLM)",
