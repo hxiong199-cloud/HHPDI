@@ -163,54 +163,58 @@ class SettingsWindow(tk.Toplevel):
     def _build_fallback_block(self, parent, tag, color, models):
         """备选服务商折叠区块（主服务商全部重试失败后自动切换）"""
         fb_enabled = tk.BooleanVar(value=False)
+        arrow_var  = tk.StringVar(value="▶")
 
-        # 折叠头部
-        header = tk.Frame(parent, bg=COLORS["bg_main"])
-        header.pack(fill="x", pady=(PADDING["sm"], 0))
+        # ── 折叠头部（始终可见）──────────────────────────────
+        header = tk.Frame(parent, bg=COLORS["bg_main"], cursor="hand2")
+        header.pack(fill="x", pady=(PADDING["xs"], 0))
 
-        arrow_var = tk.StringVar(value="▶")
+        arrow_lbl = tk.Label(header, textvariable=arrow_var,
+                             bg=COLORS["bg_main"], fg=COLORS["text_muted"],
+                             font=FONTS["xs"], cursor="hand2")
+        arrow_lbl.pack(side="left")
+
+        title_lbl = tk.Label(header,
+                             text=f"备选服务商（{tag.upper()} 主服务商失败时自动切换）",
+                             bg=COLORS["bg_main"], fg=COLORS["text_muted"],
+                             font=FONTS["xs"], cursor="hand2")
+        title_lbl.pack(side="left", padx=(4, 0))
+
+        # ── 内容容器（始终 pack 在正确位置，折叠时 inner 被隐藏）──
         content_frame = tk.Frame(parent, bg=COLORS["bg_card"])
+        content_frame.pack(fill="x")
 
-        def _toggle():
-            if content_frame.winfo_viewable():
-                content_frame.pack_forget()
+        inner = tk.Frame(content_frame, bg=COLORS["bg_card"])
+        inner.columnconfigure(1, weight=1)
+        # inner 默认不 pack（折叠状态）
+
+        def _toggle(_event=None):
+            if inner.winfo_ismapped():
+                inner.pack_forget()
                 arrow_var.set("▶")
             else:
-                content_frame.pack(fill="x")
+                inner.pack(fill="x", padx=PADDING["lg"], pady=PADDING["md"])
                 arrow_var.set("▼")
 
-        tk.Label(header, textvariable=arrow_var,
-                 bg=COLORS["bg_main"], fg=COLORS["text_muted"],
-                 font=FONTS["xs"], cursor="hand2").pack(side="left")
-        toggle_lbl = tk.Label(header,
-                 text=f"备选服务商（{tag.upper()} 主服务商失败时自动切换）",
-                 bg=COLORS["bg_main"], fg=COLORS["text_muted"],
-                 font=FONTS["xs"], cursor="hand2")
-        toggle_lbl.pack(side="left", padx=(4, 0))
-        toggle_lbl.bind("<Button-1>", lambda e: _toggle())
-        header.bind("<Button-1>", lambda e: _toggle())
+        for w in (header, arrow_lbl, title_lbl):
+            w.bind("<Button-1>", _toggle)
 
-        # 内容区（默认折叠）
-        inner = tk.Frame(content_frame, bg=COLORS["bg_card"])
-        inner.pack(fill="x", padx=PADDING["lg"], pady=PADDING["md"])
-        inner.columnconfigure(1, weight=1)
-
+        # ── 表单内容 ─────────────────────────────────────────
         def lbl(t, r):
             tk.Label(inner, text=t, bg=COLORS["bg_card"], fg=COLORS["text_muted"],
                      font=FONTS["sm"], anchor="w", width=9).grid(
                          row=r, column=0, sticky="w", pady=4)
 
-        def entry(r, show=""):
+        def entry(r):
             e = tk.Entry(inner, bg=COLORS["bg_input"], fg=COLORS["text_primary"],
                          insertbackground=COLORS["text_primary"],
                          relief="flat", bd=0, highlightthickness=1,
                          highlightbackground=COLORS["border"],
-                         highlightcolor=color, font=FONTS["mono_sm"], show=show)
+                         highlightcolor=color, font=FONTS["mono_sm"])
             e.grid(row=r, column=1, sticky="ew",
                    padx=(PADDING["sm"], 0), pady=4, ipady=5)
             return e
 
-        # 启用开关
         tk.Checkbutton(inner, text="启用备选服务商",
                        variable=fb_enabled,
                        bg=COLORS["bg_card"], fg=COLORS["text_primary"],
@@ -244,10 +248,10 @@ class SettingsWindow(tk.Toplevel):
 
         lbl("模型", 3)
         fb_mv = tk.StringVar()
-        fb_cb = ttk.Combobox(inner, textvariable=fb_mv, values=models,
-                              font=FONTS["sm"], style="Dark.TCombobox", width=42)
-        fb_cb.grid(row=3, column=1, sticky="ew",
-                   padx=(PADDING["sm"], 0), pady=4)
+        ttk.Combobox(inner, textvariable=fb_mv, values=models,
+                     font=FONTS["sm"], style="Dark.TCombobox", width=42).grid(
+                         row=3, column=1, sticky="ew",
+                         padx=(PADDING["sm"], 0), pady=4)
 
         setattr(self, f"_{tag}_fb_enabled", fb_enabled)
         setattr(self, f"_{tag}_fb_url",     fb_url_e)
