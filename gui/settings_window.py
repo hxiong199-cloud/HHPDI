@@ -34,7 +34,7 @@ class SettingsWindow(tk.Toplevel):
     def __init__(self, parent):
         super().__init__(parent)
         self.title("模型设置")
-        self.geometry("660x740")
+        self.geometry("660x980")
         self.resizable(True, False)
         self.configure(bg=COLORS["bg_main"])
         self.grab_set()
@@ -77,11 +77,19 @@ class SettingsWindow(tk.Toplevel):
             color=COLORS["tool1_color"],
             models=SILICONFLOW_VLM_MODELS)
 
+        self._build_fallback_block(body, "vlm",
+            color=COLORS["tool1_color"],
+            models=SILICONFLOW_VLM_MODELS)
+
         tk.Frame(body, bg=COLORS["border"], height=1).pack(fill="x", pady=PADDING["lg"])
 
         self._build_model_block(body, "llm",
             title="文本模型  (LLM)",
             subtitle="用于数据标注 — 打标签、表格转QA",
+            color=COLORS["tool3_color"],
+            models=SILICONFLOW_LLM_MODELS)
+
+        self._build_fallback_block(body, "llm",
             color=COLORS["tool3_color"],
             models=SILICONFLOW_LLM_MODELS)
 
@@ -152,6 +160,100 @@ class SettingsWindow(tk.Toplevel):
         setattr(self, f"_{tag}_key",   key_e)
         setattr(self, f"_{tag}_model", mv)
 
+    def _build_fallback_block(self, parent, tag, color, models):
+        """备选服务商折叠区块（主服务商全部重试失败后自动切换）"""
+        fb_enabled = tk.BooleanVar(value=False)
+
+        # 折叠头部
+        header = tk.Frame(parent, bg=COLORS["bg_main"])
+        header.pack(fill="x", pady=(PADDING["sm"], 0))
+
+        arrow_var = tk.StringVar(value="▶")
+        content_frame = tk.Frame(parent, bg=COLORS["bg_card"])
+
+        def _toggle():
+            if content_frame.winfo_viewable():
+                content_frame.pack_forget()
+                arrow_var.set("▶")
+            else:
+                content_frame.pack(fill="x")
+                arrow_var.set("▼")
+
+        tk.Label(header, textvariable=arrow_var,
+                 bg=COLORS["bg_main"], fg=COLORS["text_muted"],
+                 font=FONTS["xs"], cursor="hand2").pack(side="left")
+        toggle_lbl = tk.Label(header,
+                 text=f"备选服务商（{tag.upper()} 主服务商失败时自动切换）",
+                 bg=COLORS["bg_main"], fg=COLORS["text_muted"],
+                 font=FONTS["xs"], cursor="hand2")
+        toggle_lbl.pack(side="left", padx=(4, 0))
+        toggle_lbl.bind("<Button-1>", lambda e: _toggle())
+        header.bind("<Button-1>", lambda e: _toggle())
+
+        # 内容区（默认折叠）
+        inner = tk.Frame(content_frame, bg=COLORS["bg_card"])
+        inner.pack(fill="x", padx=PADDING["lg"], pady=PADDING["md"])
+        inner.columnconfigure(1, weight=1)
+
+        def lbl(t, r):
+            tk.Label(inner, text=t, bg=COLORS["bg_card"], fg=COLORS["text_muted"],
+                     font=FONTS["sm"], anchor="w", width=9).grid(
+                         row=r, column=0, sticky="w", pady=4)
+
+        def entry(r, show=""):
+            e = tk.Entry(inner, bg=COLORS["bg_input"], fg=COLORS["text_primary"],
+                         insertbackground=COLORS["text_primary"],
+                         relief="flat", bd=0, highlightthickness=1,
+                         highlightbackground=COLORS["border"],
+                         highlightcolor=color, font=FONTS["mono_sm"], show=show)
+            e.grid(row=r, column=1, sticky="ew",
+                   padx=(PADDING["sm"], 0), pady=4, ipady=5)
+            return e
+
+        # 启用开关
+        tk.Checkbutton(inner, text="启用备选服务商",
+                       variable=fb_enabled,
+                       bg=COLORS["bg_card"], fg=COLORS["text_primary"],
+                       activebackground=COLORS["bg_card"],
+                       selectcolor=COLORS["bg_input"],
+                       font=FONTS["sm"]).grid(
+                           row=0, column=0, columnspan=2,
+                           sticky="w", pady=(0, 6))
+
+        lbl("Base URL", 1)
+        fb_url_e = entry(1)
+
+        lbl("API Key", 2)
+        key_row = tk.Frame(inner, bg=COLORS["bg_card"])
+        key_row.grid(row=2, column=1, sticky="ew",
+                     padx=(PADDING["sm"], 0), pady=4)
+        fb_key_e = tk.Entry(key_row, bg=COLORS["bg_input"], fg=COLORS["text_primary"],
+                             insertbackground=COLORS["text_primary"],
+                             relief="flat", bd=0, highlightthickness=1,
+                             highlightbackground=COLORS["border"],
+                             highlightcolor=color, font=FONTS["mono_sm"], show="•")
+        fb_key_e.pack(side="left", fill="x", expand=True, ipady=5)
+        sv = tk.BooleanVar(value=False)
+        tk.Checkbutton(key_row, text="显示", variable=sv,
+                       bg=COLORS["bg_card"], fg=COLORS["text_muted"],
+                       activebackground=COLORS["bg_card"],
+                       selectcolor=COLORS["bg_input"], font=FONTS["xs"],
+                       command=lambda e=fb_key_e, v=sv:
+                           e.config(show="" if v.get() else "•")
+                       ).pack(side="right", padx=(6, 0))
+
+        lbl("模型", 3)
+        fb_mv = tk.StringVar()
+        fb_cb = ttk.Combobox(inner, textvariable=fb_mv, values=models,
+                              font=FONTS["sm"], style="Dark.TCombobox", width=42)
+        fb_cb.grid(row=3, column=1, sticky="ew",
+                   padx=(PADDING["sm"], 0), pady=4)
+
+        setattr(self, f"_{tag}_fb_enabled", fb_enabled)
+        setattr(self, f"_{tag}_fb_url",     fb_url_e)
+        setattr(self, f"_{tag}_fb_key",     fb_key_e)
+        setattr(self, f"_{tag}_fb_model",   fb_mv)
+
     def _build_parse_options(self, parent):
         tk.Label(parent, text="解析选项", bg=COLORS["bg_main"],
                  fg=COLORS["text_secondary"], font=FONTS["h3"]).pack(anchor="w", pady=(0, PADDING["sm"]))
@@ -186,6 +288,18 @@ class SettingsWindow(tk.Toplevel):
         self._set(self._llm_key, llm.get("api_key", ""))
         if llm.get("model"): self._llm_model.set(llm["model"])
 
+        vfb = cfg.get("vlm_fallback", {})
+        self._vlm_fb_enabled.set(vfb.get("enabled", False))
+        self._set(self._vlm_fb_url, vfb.get("base_url", ""))
+        self._set(self._vlm_fb_key, vfb.get("api_key", ""))
+        if vfb.get("model"): self._vlm_fb_model.set(vfb["model"])
+
+        lfb = cfg.get("llm_fallback", {})
+        self._llm_fb_enabled.set(lfb.get("enabled", False))
+        self._set(self._llm_fb_url, lfb.get("base_url", ""))
+        self._set(self._llm_fb_key, lfb.get("api_key", ""))
+        if lfb.get("model"): self._llm_fb_model.set(lfb["model"])
+
     def _set(self, entry, val):
         entry.delete(0, "end")
         entry.config(fg=COLORS["text_primary"])
@@ -198,10 +312,22 @@ class SettingsWindow(tk.Toplevel):
                 "api_key":  self._vlm_key.get().strip(),
                 "model":    self._vlm_model.get().strip(),
             },
+            "vlm_fallback": {
+                "enabled":  self._vlm_fb_enabled.get(),
+                "base_url": self._vlm_fb_url.get().strip(),
+                "api_key":  self._vlm_fb_key.get().strip(),
+                "model":    self._vlm_fb_model.get().strip(),
+            },
             "llm": {
                 "base_url": self._llm_url.get().strip() or SILICONFLOW_BASE_URL,
                 "api_key":  self._llm_key.get().strip(),
                 "model":    self._llm_model.get().strip(),
+            },
+            "llm_fallback": {
+                "enabled":  self._llm_fb_enabled.get(),
+                "base_url": self._llm_fb_url.get().strip(),
+                "api_key":  self._llm_fb_key.get().strip(),
+                "model":    self._llm_fb_model.get().strip(),
             },
             "model_mode": "online",
             "online": {

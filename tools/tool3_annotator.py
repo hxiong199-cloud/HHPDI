@@ -916,14 +916,10 @@ class Tool3Panel(tk.Frame):
                 self._start_btn.config(state='normal'),
                 self._stop_btn.config(state='disabled')))
 
-    def _call_llm(self, system_prompt, user_msg):
+    def _do_request(self, url, key, model, system_prompt, user_msg):
+        """带重试的单次 LLM 请求，失败时抛出最后一次异常"""
         import requests as rq
-        import time
-        url   = self._url_entry.get().strip()
-        key   = self._key_entry.get().strip()
-        model = self._model_var.get().strip()
-        h = {'Content-Type': 'application/json',
-             'Authorization': f'Bearer {key}'}
+        h = {'Content-Type': 'application/json', 'Authorization': f'Bearer {key}'}
         p = {'model': model,
              'messages': [{'role': 'system', 'content': system_prompt},
                            {'role': 'user',   'content': user_msg}],
@@ -932,11 +928,10 @@ class Tool3Panel(tk.Frame):
         wait = 3
         last_exc = None
         for attempt in range(max_retries):
-            _rate_limiter.acquire()  # 全局限速，防止并发爆 API
+            _rate_limiter.acquire()
             try:
                 r = rq.post(url, headers=h, json=p, timeout=300)
                 if r.status_code == 429:
-                    # 限流：加抖动后重试（避免所有 worker 同步重试）
                     jitter = random.uniform(0, wait)
                     time.sleep(wait + jitter)
                     wait *= 2
@@ -953,6 +948,26 @@ class Tool3Panel(tk.Frame):
                     time.sleep(wait + jitter)
                     wait *= 2
         raise last_exc
+
+    def _call_llm(self, system_prompt, user_msg):
+        """主服务商调用，主服务商全部重试失败后自动切换备选服务商"""
+        url   = self._url_entry.get().strip()
+        key   = self._key_entry.get().strip()
+        model = self._model_var.get().strip()
+        try:
+            return self._do_request(url, key, model, system_prompt, user_msg)
+        except Exception as primary_err:
+            fb = get_config().get('llm_fallback', {})
+            if (fb.get('enabled') and fb.get('api_key')
+                    and fb.get('base_url') and fb.get('model')):
+                fb_url = fb['base_url'].rstrip('/') + '/chat/completions'
+                try:
+                    return self._do_request(
+                        fb_url, fb['api_key'], fb['model'],
+                        system_prompt, user_msg)
+                except Exception:
+                    pass
+            raise primary_err
 
     def _process_text(self, unit):
         sys_p = (PROMPT_TEXT

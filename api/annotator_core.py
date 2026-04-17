@@ -445,8 +445,9 @@ def _rebuild(orig_lines: list, units: list, results: list) -> list:
 #  LLM 调用（独立实现，不依赖 GUI）
 # ══════════════════════════════════════════════════════════════
 
-def _call_llm(url: str, key: str, model: str,
-              system_prompt: str, user_msg: str) -> str:
+def _do_request(url: str, key: str, model: str,
+                system_prompt: str, user_msg: str) -> str:
+    """带重试的单次 LLM 请求，失败时抛出最后一次异常"""
     import requests as rq
     headers = {
         'Content-Type': 'application/json',
@@ -485,6 +486,25 @@ def _call_llm(url: str, key: str, model: str,
                 time.sleep(wait + jitter)
                 wait *= 2
     raise last_exc
+
+
+def _call_llm(url: str, key: str, model: str,
+              system_prompt: str, user_msg: str) -> str:
+    """主服务商调用，主服务商全部重试失败后自动切换备选服务商"""
+    from config.settings import get_config
+    try:
+        return _do_request(url, key, model, system_prompt, user_msg)
+    except Exception as primary_err:
+        fb = get_config().get('llm_fallback', {})
+        if (fb.get('enabled') and fb.get('api_key')
+                and fb.get('base_url') and fb.get('model')):
+            fb_url = fb['base_url'].rstrip('/') + '/chat/completions'
+            try:
+                return _do_request(fb_url, fb['api_key'], fb['model'],
+                                   system_prompt, user_msg)
+            except Exception:
+                pass
+        raise primary_err
 
 
 def _process_text_unit(unit: dict, url: str, key: str, model: str) -> dict:

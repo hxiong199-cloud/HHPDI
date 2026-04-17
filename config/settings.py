@@ -18,6 +18,18 @@ DEFAULT_CONFIG = {
         "base_url": "https://api.siliconflow.cn/v1",
         "model": "Qwen/Qwen2.5-VL-72B-Instruct",
     },
+    "vlm_fallback": {
+        "enabled": False,
+        "base_url": "",
+        "api_key": "",
+        "model": "",
+    },
+    "llm_fallback": {
+        "enabled": False,
+        "base_url": "",
+        "api_key": "",
+        "model": "",
+    },
     "local": {
         "base_url": "http://localhost:11434/v1",
         "model": "llava:latest",
