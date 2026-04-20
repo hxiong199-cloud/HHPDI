@@ -3,12 +3,13 @@
 正确顺序：01 文档解析 → 02 数据标注 → 03 MD转Word
 支持批量多文件输入（最多10个，每个≤50MB）
 """
-import os, threading, traceback
+import os, time, threading, traceback
 from pathlib import Path
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 from gui.theme import COLORS, FONTS, PADDING
 from gui.widgets import StyledButton, LogView, Divider
+from config.settings import get_config
 
 _MAX_FILES        = 10
 _MAX_SIZE_MB      = 50
@@ -538,19 +539,61 @@ class PipelinePanel(tk.Frame):
             self._log.append("未配置 LLM API Key，跳过步骤02", "WARNING")
             return None
 
+        # 使用与 tool3_annotator 相同的限速器和重试逻辑
+        from tools.tool3_annotator import (
+            _rate_limiter, _html_table_to_rows,
+            _is_sub_header as _ish, _merge_header_rows as _mhr,
+        )
+
         def _call(sys_p, usr_m):
-            h = {"Content-Type": "application/json",
-                 "Authorization": f"Bearer {api_key}"}
-            p = {"model": model_name,
-                 "messages": [{"role": "system", "content": sys_p},
-                               {"role": "user",   "content": usr_m}],
-                 "max_tokens": 2048, "temperature": 0}
-            r = _rq.post(model_url, headers=h, json=p, timeout=300)
-            r.raise_for_status()
-            raw = r.json()["choices"][0]["message"]["content"].strip()
-            raw = _r.sub(r'^```(?:json)?\s*', '', raw)
-            raw = _r.sub(r'\s*```$', '', raw).strip()
-            return raw
+            """带限速+重试+备选的 LLM 调用"""
+            import random as _rand
+            max_retries, wait = 4, 3
+            last_exc = None
+            for attempt in range(max_retries):
+                _rate_limiter.acquire()
+                try:
+                    h = {"Content-Type": "application/json",
+                         "Authorization": f"Bearer {api_key}"}
+                    p = {"model": model_name,
+                         "messages": [{"role": "system", "content": sys_p},
+                                       {"role": "user",   "content": usr_m}],
+                         "max_tokens": 2048, "temperature": 0}
+                    r = _rq.post(model_url, headers=h, json=p, timeout=300)
+                    if r.status_code == 429:
+                        time.sleep(wait + _rand.uniform(0, wait))
+                        wait *= 2
+                        continue
+                    r.raise_for_status()
+                    raw = r.json()["choices"][0]["message"]["content"].strip()
+                    raw = _r.sub(r'^```(?:json)?\s*', '', raw)
+                    raw = _r.sub(r'\s*```$', '', raw).strip()
+                    return raw
+                except Exception as exc:
+                    last_exc = exc
+                    if attempt < max_retries - 1:
+                        time.sleep(wait + _rand.uniform(0, wait))
+                        wait *= 2
+            # 备选服务商
+            fb = get_config().get('llm_fallback', {})
+            if fb.get('enabled') and fb.get('api_key') and fb.get('base_url') and fb.get('model'):
+                fb_url = fb['base_url'].rstrip('/') + '/chat/completions'
+                try:
+                    h = {"Content-Type": "application/json",
+                         "Authorization": f"Bearer {fb['api_key']}"}
+                    p = {"model": fb['model'],
+                         "messages": [{"role": "system", "content": sys_p},
+                                       {"role": "user",   "content": usr_m}],
+                         "max_tokens": 2048, "temperature": 0}
+                    r = _rq.post(fb_url, headers=h, json=p, timeout=300)
+                    r.raise_for_status()
+                    raw = r.json()["choices"][0]["message"]["content"].strip()
+                    raw = _r.sub(r'^```(?:json)?\s*', '', raw)
+                    raw = _r.sub(r'\s*```$', '', raw).strip()
+                    return raw
+                except Exception:
+                    pass
+            raise last_exc
 
         with open(md_path, "r", encoding="utf-8") as f:
             content = f.read()
@@ -564,6 +607,9 @@ class PipelinePanel(tk.Frame):
                 break
             self._p2.update(5 + (idx / max(total, 1)) * 90,
                             f"Step 02 — {idx+1}/{total}")
+            # 每10个单元在日志里输出一次进度
+            if idx % 10 == 0:
+                self._log.append(f"  标注进度 {idx+1}/{total}…", "INFO")
             try:
                 if unit["type"] == "text":
                     sys_p = (PROMPT_TEXT
@@ -580,39 +626,48 @@ class PipelinePanel(tk.Frame):
                     headers   = unit.get("headers", [])
                     data_rows = unit.get("data_rows", [])
 
-                    # png_ref 类型：从旁边的 .json 文件加载 grid 数据
+                    # png_ref 类型：支持 .html（新格式）和 .json（旧格式）
                     if fmt == "png_ref" and not data_rows:
                         import json as _j2
-                        from tools.tool3_annotator import _is_sub_header as _ish, _merge_header_rows as _mhr
                         tbl_ref = unit.get("tbl_ref", "")
                         if tbl_ref:
-                            json_path = str(Path(md_path).parent / tbl_ref.replace(".png", ".json"))
-                            if _r.search(r'\.png$', tbl_ref) and Path(json_path).exists():
-                                try:
-                                    grid = _j2.loads(Path(json_path).read_text(encoding="utf-8"))
-                                    if grid and len(grid) > 1:
-                                        raw_headers = grid[0]
-                                        if len(grid) > 2 and _ish(grid[1]):
-                                            headers   = grid[1]
-                                            data_rows = grid[2:]
-                                        elif len(grid) > 2 and not _ish(grid[1]) \
-                                                and not any(
-                                                    _r.fullmatch(r'[\d.,]+', v)
-                                                    for v in grid[1] if v.strip()):
-                                            headers   = _mhr(raw_headers, grid[1])
-                                            data_rows = grid[2:]
-                                        else:
-                                            headers   = raw_headers
-                                            data_rows = grid[1:]
-                                except Exception:
-                                    pass
+                            tbl_lower = tbl_ref.lower()
+                            if tbl_lower.endswith('.html') or tbl_lower.endswith('.htm'):
+                                html_path = Path(md_path).parent / tbl_ref
+                                if html_path.exists():
+                                    try:
+                                        html_content = html_path.read_text(encoding="utf-8", errors="replace")
+                                        headers, data_rows = _html_table_to_rows(html_content)
+                                    except Exception:
+                                        pass
+                            else:
+                                json_path = str(Path(md_path).parent / tbl_ref.replace(".png", ".json"))
+                                if Path(json_path).exists():
+                                    try:
+                                        grid = _j2.loads(Path(json_path).read_text(encoding="utf-8"))
+                                        if grid and len(grid) > 1:
+                                            raw_headers = grid[0]
+                                            if len(grid) > 2 and _ish(grid[1]):
+                                                headers   = grid[1]
+                                                data_rows = grid[2:]
+                                            elif len(grid) > 2 and not _ish(grid[1]) \
+                                                    and not any(
+                                                        _r.fullmatch(r'[\d.,]+', v)
+                                                        for v in grid[1] if v.strip()):
+                                                headers   = _mhr(raw_headers, grid[1])
+                                                data_rows = grid[2:]
+                                            else:
+                                                headers   = raw_headers
+                                                data_rows = grid[1:]
+                                    except Exception:
+                                        pass
 
                     if not data_rows:
                         results[idx] = {"type": "table", "row_results": []}
                         continue
                     # 整表一次批量请求
                     table_text = "\n".join(unit["lines"]) if fmt != "png_ref" else \
-                                 "\n".join(["\t".join(r) for r in [headers] + list(data_rows)])
+                                 "\n".join(["\t".join(str(c) for c in r) for r in [headers] + list(data_rows)])
                     row_count  = len(data_rows)
                     sys_p = (PROMPT_TABLE_BATCH
                              .replace("__TITLE__", unit["title"])

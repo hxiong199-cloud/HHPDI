@@ -342,7 +342,8 @@ class SettingsWindow(tk.Toplevel):
         entry.config(fg=COLORS["text_primary"])
         if val: entry.insert(0, val)
 
-    def _save(self):
+    def _do_save(self):
+        """仅保存配置，不弹窗、不关闭窗口（供测试连接调用）"""
         updates = {
             "vlm": {
                 "base_url": self._vlm_url.get().strip() or SILICONFLOW_BASE_URL,
@@ -380,11 +381,14 @@ class SettingsWindow(tk.Toplevel):
             },
         }
         update_config(updates)
+
+    def _save(self):
+        self._do_save()
         messagebox.showinfo("已保存", "模型设置已保存", parent=self)
         self.destroy()
 
     def _test(self):
-        self._save()
+        self._do_save()  # 保存配置但不关闭窗口
         try:
             from core.vlm_client import test_connection
             ok, msg = test_connection()

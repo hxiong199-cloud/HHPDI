@@ -986,34 +986,44 @@ class Tool3Panel(tk.Frame):
         headers   = unit.get('headers', [])
         data_rows = unit.get('data_rows', [])
 
-        # png_ref 类型：从旁边的 .json 文件加载 grid 数据
+        # png_ref 类型：从旁边的文件加载 grid 数据（支持 .html 和 .json）
         if fmt == 'png_ref' and not data_rows:
-            import json as _j2, re as _re2
+            import json as _j2
             from pathlib import Path as _P
             tbl_ref = unit.get('tbl_ref', '')
             if tbl_ref and md_path:
-                json_path = str(_P(md_path).parent / tbl_ref.replace('.png', '.json'))
-                if _P(json_path).exists():
-                    try:
-                        grid = _j2.loads(_P(json_path).read_text(encoding='utf-8'))
-                        if grid and len(grid) > 1:
-                            raw_headers = grid[0]
-                            if len(grid) > 2 and _is_sub_header(grid[1]):
-                                # 完全的副表头：直接用行1
-                                headers   = grid[1]
-                                data_rows = grid[2:]
-                            elif len(grid) > 2 and not _is_sub_header(grid[1]) \
-                                    and not any(
-                                        __import__('re').fullmatch(r'[\d.,]+', v)
-                                        for v in grid[1] if v.strip()):
-                                # 行1是展开的表头行（合并单元格）：合并行0和行1
-                                headers   = _merge_header_rows(raw_headers, grid[1])
-                                data_rows = grid[2:]
-                            else:
-                                headers   = raw_headers
-                                data_rows = grid[1:]
-                    except Exception:
-                        pass
+                tbl_lower = tbl_ref.lower()
+                if tbl_lower.endswith('.html') or tbl_lower.endswith('.htm'):
+                    # HTML 表格文件（新格式）：直接解析 HTML
+                    html_path = _P(md_path).parent / tbl_ref
+                    if html_path.exists():
+                        try:
+                            html_content = html_path.read_text(encoding='utf-8', errors='replace')
+                            headers, data_rows = _html_table_to_rows(html_content)
+                        except Exception:
+                            pass
+                else:
+                    # JSON 文件（旧格式：.png → .json）
+                    json_path = str(_P(md_path).parent / tbl_ref.replace('.png', '.json'))
+                    if _P(json_path).exists():
+                        try:
+                            grid = _j2.loads(_P(json_path).read_text(encoding='utf-8'))
+                            if grid and len(grid) > 1:
+                                raw_headers = grid[0]
+                                if len(grid) > 2 and _is_sub_header(grid[1]):
+                                    headers   = grid[1]
+                                    data_rows = grid[2:]
+                                elif len(grid) > 2 and not _is_sub_header(grid[1]) \
+                                        and not any(
+                                            __import__('re').fullmatch(r'[\d.,]+', v)
+                                            for v in grid[1] if v.strip()):
+                                    headers   = _merge_header_rows(raw_headers, grid[1])
+                                    data_rows = grid[2:]
+                                else:
+                                    headers   = raw_headers
+                                    data_rows = grid[1:]
+                        except Exception:
+                            pass
 
         if not data_rows:
             sys_p = (PROMPT_TEXT
